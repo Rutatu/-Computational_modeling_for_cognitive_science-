@@ -18,7 +18,7 @@ In this course we start again from the foundations of statistical thinking: What
 
 ## Portfolio assignments
 
-File ```Portfolio_Exam.pdf``` contains a compilation of written reports solving the assignments listed below. Each portfolio assignment has a dedicate folder in this repository  displaying the code solving the assignment (rmd and md files).
+File ```Portfolio_Exam.pdf``` contains a compilation of written reports solving the assignments listed below. Each portfolio assignment has a dedicated folder displaying the code solving the assignment (rmd and md files) in this repository.
 
 | Assignment | Description |
 | --- | --- |
