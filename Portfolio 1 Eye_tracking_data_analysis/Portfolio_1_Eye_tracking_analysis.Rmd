@@ -1,0 +1,310 @@
+---
+title: "CompMod1"
+author: "Peter"
+date: "18/2/2020"
+output: github_document
+---
+
+```{r, setup}
+pacman::p_load(tidyverse,lmerTest,ggrepel,ggExtra, Hmisc,DHARMa,MuMIn)
+
+
+samples <- read_csv("Exported_EyeLink_data/Samples_merged.csv",col_types= cols( ParticipantID = col_character(),
+
+ParticipantGender = col_character(),
+
+EyeTracked = col_character(),
+
+Task = col_character(),
+
+SearchOrder = col_double(),
+
+ForagingType = col_character(),
+
+Trial = col_double(),
+
+Stimulus = col_character(),
+
+Video = col_character(),
+
+Time = col_double(),
+
+GazeX = col_double(),
+
+GazeY = col_double(),
+
+PupilSize = col_double(),
+
+FixationNo = col_double(),
+
+Fix_StartTime = col_double(),
+
+Fix_EndTime = col_double(),
+
+Fix_Duration = col_double(),
+
+Fix_MeanX = col_double(),
+
+Fix_MeanY = col_double(),
+
+Fix_MeanPupilSize = col_double(),
+
+SaccadeNo = col_double(),
+
+Sac_StartTime = col_double(),
+
+Sac_EndTime = col_double(),
+
+Sac_Duration = col_double(),
+
+Sac_StartX = col_double(),
+
+Sac_StartY = col_double(),
+
+Sac_EndX = col_double(),
+
+Sac_EndY = col_double(),
+
+Sac_PeakVelocity = col_double(),
+
+Sac_MeanVelocity = col_double(),
+
+Sac_Blink = col_logical(),
+
+Sac_Direction = col_character(),
+
+Sac_Amplitude = col_double())) %>% 
+  mutate(GazeY = 1051-GazeY, Fix_MeanY = 1051-Fix_MeanY) %>% 
+  filter(Time<=41202)
+
+
+
+```
+
+
+```{r}
+
+#isolating the one guy
+unique(samples$ParticipantID)
+x = subset(samples, ParticipantID ==    'M2_1' & Trial == 5)
+
+
+
+##creating summary dataset of one data point for one saccade and quick visualization
+Fix <- x[!is.na(x$FixationNo),] %>% 
+  group_by(FixationNo) %>% # since I only have one participant and one trial
+  summarise(MeanX = Fix_MeanX[1], MeanY = Fix_MeanY[1], Duration = Fix_Duration[1]) %>% 
+  filter(Duration>=300) # only keep fixations > 300 ms
+
+#preparing image
+img <- jpeg::readJPEG('stimuli_Foraging/birds.jpg')  
+img <- grid::rasterGrob(img, width=unit(1, "npc"), height = unit(1,"npc"),
+                        interpolate = FALSE)
+#scan path
+ggplot(Fix, aes(MeanX, MeanY, color = Fix$FixationNo)) + 
+  annotation_custom(img, xmin = 0, xmax = 1680, ymin = 0, ymax = 1050) +
+  # hacky way to adjust opacity of background picture:
+  annotate(geom = "rect", xmin = 0, xmax = 1680, ymin = 0, ymax = 1050, fill = "white", alpha = .3) +
+  geom_path(color = "black") +
+  geom_point(size = Fix$Duration*.02, alpha = .8) +
+  geom_text_repel(aes(label = Fix$Duration), size = 3, color = "white") +
+  xlim(0,1680) + ylim(0,1050)
+
+
+
+```
+
+```{r}
+##creating summary dataset of one data point for one saccade and quick visualization
+saccades <- samples[!is.na(samples$SaccadeNo) & samples$Task == "Foraging",] %>% 
+  group_by(ParticipantID, Trial, SaccadeNo) %>% 
+  summarise(SaccadeAmplitude = mean(Sac_Amplitude), ForagingType = ForagingType[1], Stimulus = Stimulus[1]) %>% 
+  filter(!is.na(SaccadeAmplitude))
+
+head(saccades)
+
+Saccades <- saccades
+
+#better density plots
+ggplot(saccades, aes(SaccadeAmplitude, color = ParticipantID)) + geom_density()+facet_wrap(~ForagingType)+ggtitle("Saccade amplitude Distributions")
+```
+
+```{r}
+
+## comparing normal and log models
+m_log <- glmer(SaccadeAmplitude ~ 1 + ForagingType + (ForagingType|ParticipantID) + (ForagingType|Stimulus), data = Saccades, family = gaussian(link="log" ))
+summary(m_log)
+
+m_id <- glmer(SaccadeAmplitude ~ 1 + ForagingType + (ForagingType|ParticipantID) + (ForagingType|Stimulus), data = Saccades, family = gaussian(link="identity" ))
+summary(m_id)
+
+# exponentiating to get back to the relevant scale
+exp(0.927+0.538) - exp(0.927)
+exp(0.07907)
+exp(0.538)
+exp(0.927+0.538) - exp(0.538)
+## plotting and comparing results
+plot(residuals(m_log)) + plot(residuals(m_id))
+
+plot(predict(m_log)) + plot(predict(m_id))
+
+plot(density(predict(m_log))) + plot(density(predict(m_id)))
+
+## assessing model's fit 
+dGaus <- DHARMa::simulateResiduals(m_log, n=250)
+dlog <- DHARMa::simulateResiduals(m_id)
+
+plot(dGaus)
+plot(dlog)
+plot(density(Saccades$SaccadeNo))
+
+summary(abs(predict(m_log)- Saccades$SaccadeAmplitude))
+
+r.squaredGLMM(m_log)
+r.squaredGLMM(m_id)
+
+```
+```{r}
+
+saccadesModelData2 <- saccades %>% 
+  group_by(ForagingType) %>% 
+  summarise(MeanSaccadeAmplitude = mean(SaccadeAmplitude))
+
+ggplot(saccades, aes(ForagingType, SaccadeAmplitude,color=SaccadeNo)) + geom_point() + geom_abline(intercept = 2.5358, slope = 1.8753)+geom_jitter()
+
+```
+
+```{r,PupilSize}
+#Isolating the Social Engagement Data
+pupilSize <- samples %>% 
+  filter(Task== "SocialEngagement"& !is.na(PupilSize)&!is.na(Fix_MeanPupilSize))
+
+#parsing conditions from video titles
+pupilSize$VideoGender <- pupilSize$Video %>% str_extract("f|m")
+pupilSize$VideoOstension <- pupilSize$Video %>% str_extract("\\+o|\\-o")
+pupilSize$VideoDirection <- pupilSize$Video %>% str_extract("dir|div")
+pupilSize$VideoCondition<-paste(pupilSize$VideoOstension,pupilSize$VideoDirection)
+#Grouping by ID, Trial, FixNo and getting a single mean, and conditions tatuses
+pupilModelData<- pupilSize %>% 
+  group_by(ParticipantID, Trial,FixationNo) %>% 
+  summarise(PupilSizeMean = mean(Fix_MeanPupilSize), Video = Video[1],Direction= VideoDirection[1],Ostension=VideoOstension[1],Condition=VideoCondition[1])
+
+#density plot
+ggplot(pupilModelData, aes(PupilSizeMean, color = ParticipantID)) + geom_density()+ facet_wrap( ~ Condition, ncol=4)+ ggtitle("Density plots by by condition")
+
+#model
+pupilModel<- lmer(
+    PupilSizeMean ~ 1 + Direction*Ostension+ 
+      (1 + Direction*Ostension|ParticipantID),data=pupilModelData)
+
+pupilModelColons<- lmer(
+    PupilSizeMean ~ 1 + Direction:Ostension+ 
+      (1 + Direction:Ostension|ParticipantID),data=pupilModelData)
+
+summary(pupilModel)
+
+
+#plotting residuals
+pupilSim <- simulateResiduals(pupilModel, n = 250)
+plot(pupilSim )
+
+
+r.squaredGLMM(pupilModel)
+
+```
+
+
+```{r,Pupil Scanpath}
+
+unique(pupilSize$ParticipantID)
+pupilGuy = subset(pupilSize, ParticipantID ==    'M1' & Trial == 1)
+
+
+## Let's make a summary dataset
+pupilFix <- pupilGuy[!is.na(pupilGuy$FixationNo),] %>% 
+  group_by(FixationNo) %>% # since I only have one participant and one trial
+  summarise(MeanX = Fix_MeanX[1], MeanY = Fix_MeanY[1], Duration = Fix_Duration[1]) %>% 
+  filter(Duration>=300) # only keep fixations > 300 ms
+
+#scanpath plot #BORING...
+ggplot(pupilFix, aes(MeanX, MeanY, color = pupilFix$FixationNo)) +
+  geom_path(color = "black") +
+  geom_point(size = pupilFix$Duration*.01, alpha = .5) +
+  geom_text_repel(aes(label = pupilFix$Duration), size = 3, color = "white") +
+  xlim(0,1680) + ylim(0,1050)
+
+```
+
+```{r,Pupil Plots}
+#data for plots
+pupilModelData2 <- pupilModelData %>% 
+  group_by(Ostension, Direction) %>% 
+  summarise(PupilSizeMean = mean(PupilSizeMean))
+
+#line plot for interaction
+pupilModelData2%>% 
+  ggplot(aes(x = Ostension, 
+             y = PupilSizeMean, 
+             color = Direction)) +
+  geom_line(aes(group = Direction)) +
+  geom_point()+
+  ggtitle("Interaction effect in linear model")
+
+
+
+#bar plot
+pupilModelData %>% ggplot(
+       aes(x = Ostension,
+           fill = Direction,  
+           y = PupilSizeMean)) +
+  stat_summary(fun.y = mean,
+               geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, 
+               geom="errorbar", 
+               width = 0.25)+
+  facet_wrap(~Direction)+
+  labs(x = "Ostension",
+       y = "Pupil Size") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Blues") +
+  theme(legend.position="none")+
+  ggtitle("2X2 Bar plot")
+
+#bar plot for individuals
+pupilModelData %>% ggplot(
+       aes(x = ParticipantID,
+           fill = ParticipantID,  
+           y = PupilSizeMean)) +
+  stat_summary(fun.y = mean,
+               geom = "bar") +
+  stat_summary(fun.data = mean_cl_normal, 
+               geom="errorbar", 
+               width = 0.25)+
+  facet_wrap(~Condition)+
+  labs(x = "Participant",
+       y = "Pupil Size") +
+  ggtitle("2X2 Bar plot by participant")
+ 
+#box plots for individuals
+ggplot(pupilModelData, aes(x = ParticipantID, y = PupilSizeMean, fill = ParticipantID)) + 
+    geom_boxplot()+facet_wrap(~Condition)+
+  ggtitle("Effect for the indivudal Participant")
+
+#box plots for conditions
+ggplot(pupilModelData, aes(x = Condition, y = PupilSizeMean, fill = Condition)) + 
+    geom_boxplot()+
+  ggtitle("Boxplot on conditions")
+
+#Growth curves between conditions
+ggplot(pupilSize, aes(Time, PupilSize, color = VideoCondition)) +
+  geom_smooth()+
+  ggtitle("Growth curves between conditions")
+
+#Growth curves between conditions
+ggplot(pupilSize, aes(Time, PupilSize, color = ParticipantID)) +
+  geom_smooth()+facet_wrap(~VideoCondition)+
+  ggtitle("Growth curves between conditions for every single partipant")
+
+
+```
+
