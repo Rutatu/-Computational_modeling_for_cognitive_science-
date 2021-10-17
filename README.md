@@ -24,6 +24,23 @@ File ```Experimental_methods_3_Portfolio.pdf``` contains a compilation of writte
 | --- | --- |
 | Portfolio 1: Eye-tracking data analysis | Preprocesing and analysing eye-tracking data collected in a lab during a Foraging experiment and Social engagement experiment |
 | Portfolio 2: Evaluating the Cognitive science knowledge of Cognitive science teachers | Assessing rates from a binomial distribution, using the case of assessing our teachers’ knowledge of CogSci |
-| Portfolio 3: Causal_Inference | Exploring some issues related to multiple regressions (regressions with more than one predictor), and inferred (causal) relations between variable while utilizing Bayesian modeling. Diagnosing schizophrenia from multiple symptoms, utilizing  causal graph method (Directed Acyclical Graph) to investigate the questions. |
+| Portfolio 3: Causal Inference | Exploring some issues related to multiple regressions (regressions with more than one predictor), and inferred (causal) relations between variable while utilizing Bayesian modeling. Diagnosing schizophrenia from multiple symptoms, utilizing  causal graph method (Directed Acyclical Graph) to investigate the questions. |
 | Portfolio 4: The role of priors and cumulative science | Running a Bayesian meta-analysis of pitch variability in ASD, based on previously published literature, analyzing pitch variability in ASD in two new studies using both a conservative and a meta-analytic prior, assessing the difference in model quality and estimates using the two priors.|
 
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+***Knowledge:***
+- demonstate understanding of key weaknesses and strengths of both frequentist and Bayesian statistical methods
+- demonstrate understanding of the basics of sampling and Bayesian inference
+- demonstrate understanding of key distributions for Bayesian inference in cognitive science. 
+
+***Skills:***
+- build and evaluate Bayesian models of hierarchically structured data
+- compare models within the Bayesian framework
+- build the appropriate Bayesian model given a research question and a data set
+- communicate the assumptions, process and results of Bayesian data analysis. 
+
+
+***Competences:***
+- plan and program data analysis projects relying on Bayesian modeling techniques.
