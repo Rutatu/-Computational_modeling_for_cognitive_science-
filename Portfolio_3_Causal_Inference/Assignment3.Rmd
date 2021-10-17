@@ -1,0 +1,729 @@
+---
+title: "Assignment 3 - Causal inference"
+author: "RF"
+date: "2/5/2020"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Assignment 3 - Exploring causal inference issues
+
+In this assignment we explore some issues related to multiple regressions (regressions with more than one predictor), and inferred (causal) relations between variables. N.B. the data is simulated (to make sure I know the actual mechanism generating it), but it's based on a real study. So bear with a longish introduction to get into the details of what we are doing and why it is important.
+
+### Altercentric intrusion in schizophrenia
+
+People with schizophrenia often report altered control and distinction of self-other representations: intrusive thoughts, hearing of voices, delusions of mind reading, paranoia, etc (a substantial portion of the psychotic symptoms experienced in schizophrenia). These have been variously attributed to hypermentalizing (over attribution of mental states to others), social impairment (over preoccupation with own thought processes), hyper socialization (inability to inhibit information from others), etc.
+
+The current study investigates 1) whether schizophrenia is indeed related to altered control and distinction of self-other representations, in particular altercentric intrusions (inability to inhibit social information), and 2) whether these are related to the relevant psychotic symptoms. N.B. the actual study also investigates egocentric intrusion, do check the papers below if interested.
+
+The task is a slightly modified version of this: https://www.ncbi.nlm.nih.gov/pubmed/20731512 You look at a picture with some dots visible to you, as well as with a different person with a different set of dots visible to them. The number of dots you see and that the other sees can be the same (congruent condition) or not (incongruent condition). You are tasked to indicate whether a given number (e.g. 3) matches the number of dots you see (and the dots visible to the other person are irrelevant to the task).
+
+
+The tasks investigates altercentric intrusion: will your reaction time change according to whether the other person is seeing the same amount of dots as you, or not? The idea is that if you correctly inhibit social information, your reaction time should not change, as the information about the other person is not relevant. On the contrary, if you nevertheless use task irrelevant social information, you'll be slower at indicating whether 3 is the right number of dots when the other person sees a different amount of dots than you (conflicting information).
+The bigger the difference between RTs in the congruent and incongruent condition the bigger the altercentric intrusion effect.
+
+For each participant you have 6 variables: 1) ID, 2) AltercentricIntrusion (continuous score), 3) Diagnosis (schizophrenia vs. control), 4) VoiceHearing (severity of voice hearing symptoms, continuous score of the severity of the symptom as measured by a clinician), 5) MindReading (severity of delusions of mind reading, continuous score of the severity of the symptom as measured by a clinician); 6) Apathy (severity of lack of motivation in taking care of oneself, from washing to showing up at work, continuous score of the severity of the symptom as measured by a clinician).
+
+The research questions you have to answer are the following:
+
+## First part
+
+Q1.1) Does schizophrenia involved altercentric intrusion? Define model and priors. Test the implications of your priors (prior predictive checks) and if needed adjust them. Run the model. Test the quality of the fitted model (posterior predictive checks). Assess the evidence in favor of an increased altercentric intrusion in schizophrenia. Report the model and the results, including plots.
+
+```{r}
+pacman::p_load(tidyverse, brms, PerformanceAnalytics, parallel, vcov, GridExtra)
+
+set.seed(123)
+
+cores<- detectCores()#for parallel processing
+# Prepare the data
+
+d <- read_csv("Ass3.csv")
+summary(d)
+
+d$Diagnosis <- plyr::revalue(as.character(d$Diagnosis), 
+                             c("0"="Controls", "1"="Schizophrenia"))
+
+d <- d %>%
+  mutate(
+    ID = as.factor(ID),
+    Diagnosis = as.factor(Diagnosis)
+  )
+
+
+summary(d)
+# Define the formula
+# Define the formula
+
+AltercentricDiagnosis_f0 <- bf(
+  AltercentricIntrusion ~ 1 + Diagnosis
+)
+
+AltercentricDiagnosis_f <- bf(
+  AltercentricIntrusion ~ 0 + Diagnosis
+)
+
+
+# Design the priors
+
+get_prior(AltercentricDiagnosis_f0, family = gaussian, d)
+get_prior(AltercentricDiagnosis_f, family = gaussian, d)
+
+priorDiagnosis <- c(
+  prior(normal(4, 1), class = b), # mean and then 2SD - inspect the data
+  prior(normal(1, 2), class = sigma)
+) 
+
+# Test the priors
+
+AltercentricDiagnosis_PriorCheck_m <- brm(
+  formula = AltercentricDiagnosis_f,
+  data = d,
+  family = gaussian,
+  prior = priorDiagnosis,
+  sample_prior = "only", #meaning we want to sample the prior
+  cores = cores,
+  file = "AltercentricDiagnosis_PriorCheck_m"
+)
+#
+pp_check(AltercentricDiagnosis_PriorCheck_m, nsamples = 100)+ggtitle("AI~Diagnosis PriorCheck")
+
+## Fitting the model
+AltercentricDiagnosis_m <- brm(
+  formula = AltercentricDiagnosis_f,
+  data = d,
+  family = gaussian,
+  prior = priorDiagnosis,
+  sample_prior = T,
+  cores = cores,
+  file = "AltercentricDiagnosis_m"
+)
+
+#plot model
+plot(AltercentricDiagnosis_m)
+
+# Posterior predictive check
+pp_check(AltercentricDiagnosis_m, nsamples = 100)+ggtitle("AI~Diagnosis Posterior predictive check")
+
+## Check the model for warnings
+AltercentricDiagnosis_m
+
+# Hypothesis testing + updating check
+plot(hypothesis(AltercentricDiagnosis_m,
+           "DiagnosisSchizophrenia > DiagnosisControls"))[[1]]+ggtitle("Is AI higher in Schizophrenia patients?")
+
+hypothesis(AltercentricDiagnosis_m,
+           "DiagnosisSchizophrenia > DiagnosisControls")
+
+plot(conditional_effects(AltercentricDiagnosis_m), points=T,plot=F)[[1]]+ggtitle("Estimates of AI ~ Diagnosis")
+
+#evidence ratio - the posterior is a bunch of samples and we want to count how many of them are in/compatible with our hypothesis and we count them and gives us the ratio (21 min)
+```
+
+The model indicates a credible difference in altercentric intrusion in the two groups supporting our hypothesis (b = 0.36, CIs = 0.16, 0.57, ER = 1332). Controls showed on average an altercentric intrusion effect of 3.86 (CIs 3.74, 3.98), and schizophrenia of 4.22 (CIs = 4.01, 4.43).
+[Add plot of the effects]
+
+# SI
+The model had no divergences, a Rhat of 1, and Effective Sample Sizes above 2000 for both Bulk and Tail.
+[Add prior and posterior checks plots; add updating check plot]
+
+Q1.2) Is altercentric intrusion related to specific symptoms *in the patients*? Identify which of the symptoms could be relevant. Should you include more than one symptom? Build models, priors, predictive checks. Assess the evidence and report models and results, including plots. Discuss whether the results make sense.
+
+```{r}
+## Isolate disorder group
+d <-  d %>% 
+  mutate(
+    AltercentricIntrusion = scale(AltercentricIntrusion),
+    VoiceHearing = scale(VoiceHearing),
+    MindReading = scale(MindReading),
+    Apathy = scale(Apathy)
+  )
+
+schizoData <- d %>% 
+  filter(Diagnosis == "Schizophrenia")
+
+
+## define formula and priors ##
+
+(schizoSummary<- psych::describe(schizoData))
+
+# voice hearing
+AI_VoiceHearing_f1 <- bf(
+  AltercentricIntrusion ~ 1 + VoiceHearing)
+
+
+# MindReading
+AI_MindReading_f1 <- bf(
+  AltercentricIntrusion ~ 1 + MindReading)
+
+
+# Apathy
+AI_Apathy_f1 <- bf(
+  AltercentricIntrusion ~ 1 + Apathy)
+
+# VH + MR
+AI_VH_MR_f1 <- bf(
+  AltercentricIntrusion ~ 1 + VoiceHearing + MindReading)
+
+# ALL
+AI_VH_MR_A_f1 <- bf(
+  AltercentricIntrusion ~ 1 + Apathy + MindReading + VoiceHearing)
+
+
+## Design the priors ##
+
+# getting quick summary plus SD
+
+
+# define prior
+
+priorR2 <- c(
+  prior(normal(0, 1), class = Intercept), # mean and then 2SD - inspect the data
+  prior(normal(1, 2), class = sigma),
+  prior(normal(0, .3), class = b) # sigma = the average error we expect
+)
+
+## a function for automatizaying prior check
+
+check_prior <- function(formula, data, prior, filename){
+  model <- brm(
+  formula = formula,
+  data = data,
+  family = gaussian,
+  prior = prior,
+  sample_prior = "only",
+  control = list( adapt_delta = 0.95),
+  core = cores,
+  file = filename)
+  
+  p_check <- pp_check(model, nsamples = 100)
+  return(p_check)
+}
+
+## prior checking
+
+checkprior_VH <- check_prior(AI_VoiceHearing_f1, schizoData, priorR2, "checkprior_VH")
+checkprior_VH+ggtitle("AI~VoiceHearing Prior check")
+
+checkprior_MR <- check_prior(AI_MindReading_f1, schizoData, priorR2, "checkprior_MR")
+checkprior_MR+ggtitle("AI~MindReading Prior check")
+
+checkprior_Apathy <- check_prior(AI_Apathy_f1, schizoData, priorR2, "checkprior_Apathy")
+checkprior_Apathy+ggtitle("AI~Apathy Prior check")
+
+checkprior_VH_MR <- check_prior(AI_VH_MR_f1, schizoData, priorR2, "checkprior_VH_MR")
+checkprior_VH_MR+ggtitle("AI~VoiceHearing+MindReading Prior check")
+
+checkprior_VC_MR_A <- check_prior(AI_VH_MR_A_f1, schizoData, priorR2, "checkprior_VC_MR_A")
+checkprior_VC_MR_A+ggtitle("AI~VoiceHearing+MindReading+Apathy Prior check")
+
+```
+
+
+## fitting
+```{r}
+
+### voice hearing
+VoiceHearing1 <- brm(
+    formula = AI_VoiceHearing_f1,
+    data = schizoData,
+    family = gaussian,
+    prior = priorR2,
+    sample_prior = T,
+    refresh = 0,
+    cores = cores,
+    file = "VoiceHearing1"
+    
+  )
+
+#plot model
+
+plot(VoiceHearing1)
+  
+# a plot for a posterior check
+VH_posch <- pp_check(VoiceHearing1, nsamples = 100)
+VH_posch+ggtitle("Ai~VoiceHearing Posterior Check")
+  
+# test and plot your hypothesis
+VH_hyp <- hypothesis(VoiceHearing1, "VoiceHearing > 0")
+VH_hyp
+
+plot(conditional_effects(VoiceHearing1), points = T)[[1]]+ggtitle("Ai~VoiceHearing")
+  
+
+## mind reading ##
+MindReading1 <- brm(
+    formula = AI_MindReading_f1,
+    data = schizoData,
+    family = gaussian,
+    prior = priorR2,
+    sample_prior = T,
+    refresh = 0,
+    cores = cores,
+    file = "MindReading1"
+    )
+
+MindReading1
+
+#plot model
+
+plot(MindReading1)
+# a plot for a posterior check
+MR_posch <- pp_check(MindReading1, nsamples = 100)
+MR_posch+ggtitle("Ai~MindReading Posterior Check")
+  
+  
+# test and plot your hypothesis
+MR_hyp <- hypothesis(MindReading1, "MindReading > 0")
+MR_hyp
+
+
+plot(MR_hyp)
+plot(conditional_effects(MindReading1), points = T)[[1]]+ggtitle("Ai~MindReading")
+  
+
+## apathy ##
+Apathy1 <- brm(
+    formula = AI_Apathy_f1,
+    data = schizoData,
+    family = gaussian,
+    prior = priorR2,
+    sample_prior = T,
+    refresh = 0,
+    cores = cores,
+    file = "Apathy1"
+    )
+
+Apathy1
+
+#plot model
+
+plot(Apathy1)
+
+# a plot for a posterior check
+A_posch <- pp_check(Apathy1, nsamples = 100)
+A_posch+ggtitle("Ai~Apathy Posterior Check")
+  
+  
+# test and plot your hypothesis
+A_hyp <- hypothesis(Apathy1, "Apathy < 0")
+A_hyp
+
+plot(A_hyp)  
+plot(conditional_effects(Apathy1), points = T)[[1]]+ggtitle("Ai~Apathy")
+```
+
+
+```{r}
+## voice hearing, mind reading
+
+AI_VH_MR_m1 <- brm(
+  formula = AI_VH_MR_f1,
+  data = schizoData,
+  family = gaussian,
+  prior = priorR2,
+  sample_prior = T,
+  cores = cores,
+  file = "AI_VH_MR_m1"
+)
+AI_VH_MR_m1
+
+#plot model
+
+plot(AI_VH_MR_m1)
+
+# Posterior predictive check
+pp_check(AI_VH_MR_m1, nsamples = 100)+ggtitle("AI~VoiceHearing+MindReading Posterior Predictive Check")
+
+# Hypothesis testing + updating check
+
+hypothes_VHMR_VH <- hypothesis(AI_VH_MR_m1,
+           "VoiceHearing > 0")
+
+hypothes_VHMR_MR <- hypothesis(AI_VH_MR_m1,
+           "MindReading > 0")
+
+hypothes_VHMR_VH
+hypothes_VHMR_MR
+
+plot(hypothes_VHMR_VH,plot=F)[[1]]+ggtitle("AI~VoiceHearing+MindReading")
+plot(hypothes_VHMR_MR,plot=F)[[1]]+ggtitle("AI~VoiceHearing+MindReading")
+
+
+## conditional effects
+plot(conditional_effects(AI_VH_MR_m1), points = T)
+
+
+## Voice hearing, mind reading, apathy
+AI_VH_MR_A_m1 <- brm(
+  formula = AI_VH_MR_A_f1,
+  data = schizoData,
+  family = gaussian,
+  prior = priorR2,
+  sample_prior = T,
+  cores = cores,
+  file = "AI_VH_MR_A_m1"
+)
+
+
+AI_VH_MR_A_m1
+
+#plot model
+
+plot(AI_VH_MR_A_m1)
+
+
+# Posterior predictive check
+pp_check(AI_VH_MR_A_m1, nsamples = 100)+ggtitle("AI~VoiceHearing+MindReading+Apathy Posterior Predictive Check")
+
+# Hypothesis testing + updating check
+
+hypothes3_VH <- hypothesis(AI_VH_MR_A_m1,
+           "VoiceHearing > 0")
+
+hypothes3_MR <- hypothesis(AI_VH_MR_A_m1,
+           "MindReading > 0")
+
+hypothes3_Apathy <- hypothesis(AI_VH_MR_A_m1,
+           "Apathy < 0")
+
+
+hypothes3_VH
+hypothes3_MR
+hypothes3_Apathy
+
+
+plot(hypothes3_VH,plot=F)[[1]]+ggtitle("AI~VoiceHearing+MindReading+Apathy")
+plot(hypothes3_MR,plot=F)[[1]]+ggtitle("AI~VoiceHearing+MindReading+Apathy")
+plot(hypothes3_Apathy,plot=F)[[1]]+ggtitle("AI~VoiceHearing+MindReading+Apathy")
+
+
+## conditional effects
+plot(conditional_effects(AI_VH_MR_A_m1), points = T)
+```
+
+## Model comparison
+```{r}
+## adding criterion loo
+VoiceHearing1 <- add_criterion(VoiceHearing1, criterion = "loo")
+MindReading1 <- add_criterion(MindReading1, criterion = "loo")
+Apathy1 <- add_criterion(Apathy1, criterion = "loo")
+AI_VH_MR_m1 <- add_criterion(AI_VH_MR_m1, criterion = "loo")
+AI_VH_MR_A_m1 <- add_criterion(AI_VH_MR_A_m1, criterion = "loo")
+
+loo_compare(VoiceHearing1,
+           MindReading1,
+           Apathy1,
+           AI_VH_MR_m1,
+           AI_VH_MR_A_m1)
+
+## adding wights
+loo_model_weights(VoiceHearing1,
+           MindReading1,
+           Apathy1,
+           AI_VH_MR_m1,
+           AI_VH_MR_A_m1)
+
+```
+
+
+
+
+## Second part
+
+Q2.1) However, we know that the diagnosis is based on symptom assessment: if the overall sum of symptoms is severe enough, the participant gets a diagnosis. In other words, by selecting the patients, and including the symptoms in the model we might have inadvertently introduced an issue in our inference. Do try to draw a causal graph (Directed Acyclical Graph) of the variables and compare it with the types of causal graphs presented in the slides. Discuss which biases you might have introduced.
+
+Q2.2.) Redesign your analysis following the graph and report how the results change
+```{r}
+# formula
+champion_A_f <- bf(
+  AltercentricIntrusion ~ 1 + Apathy)
+
+# prior check
+checkprior_champion <- check_prior(champion_A_f, d, priorR2,"AI~Apathy_allData")
+checkprior_champion+ggtitle("AI~Apathy prior check using all data")
+
+
+# model
+champion_A_m <- brm(
+    formula = champion_A_f,
+    data = d,
+    family = gaussian,
+    prior = priorR2,
+    sample_prior = T,
+    refresh = 0,
+    cores = cores,
+    file = "Champion_Apathy_m"
+    )
+
+champion_A_m
+
+#plot model
+
+plot(champion_A_m)
+
+
+# a plot for a posterior check
+champion_posch <- pp_check(champion_A_m, nsamples = 100)
+champion_posch+ggtitle("AI~Apathy Posterior Pedictive Check using all data")
+  
+# test and plot your hypothesis
+champion_hyp <- hypothesis(champion_A_m, "Apathy < 0")
+champion_hyp
+
+plot(champion_hyp,plot = F)[[1]]+ggtitle("Using all data") 
+plot(conditional_effects(champion_A_m), points = T,plot=F)[[1]]+ggtitle("Estimates of AI ~ Apathy using all data")
+
+```
+
+```{r, Theory correction}
+# formula
+TheoryFormula <- bf(
+  AltercentricIntrusion ~ 1 + MindReading+VoiceHearing)
+
+# prior check
+checkprior_TheoryFormula <- check_prior(TheoryFormula, d, priorR2,"AI~VH_MR_AllData")
+checkprior_TheoryFormula
+
+
+# model
+TheoryFormulaModel<- brm(
+    formula = TheoryFormula,
+    data = d,
+    family = gaussian,
+    prior = priorR2,
+    sample_prior = T,
+    refresh = 0,
+    cores = cores,
+    file = "TheoryModel_VH_MR"
+    )
+
+TheoryFormulaModel
+
+#plot model
+
+plot(TheoryFormulaModel)
+
+# a plot for a posterior check
+theory_posch <- pp_check(TheoryFormulaModel, nsamples = 100)
+theory_posch +ggtitle("AI~MindReading+VoiceHearing Prior Check using all data")
+  
+# test and plot your hypothesis
+theory_hyp_MR <- hypothesis(TheoryFormulaModel, "MindReading > 0")
+theory_hyp_MR
+
+theory_hyp_VH <- hypothesis(TheoryFormulaModel, "VoiceHearing > 0")
+theory_hyp_VH
+
+plot(theory_hyp_MR,plot=F)[[1]]+ggtitle("AI~MindReading+VoiceHearing Hypothesis Test using all data") 
+
+plot(theory_hyp_VH,plot=F)[[1]]+ggtitle("AI~MindReading+VoiceHearing Hypothesis Test using all data")
+
+plot(conditional_effects(TheoryFormulaModel), points = T)
+
+
+```
+
+
+```{r, Comparing better models}
+
+## adding criterion loo
+TheoryFormulaModel <-
+  add_criterion(TheoryFormulaModel, criterion = "loo")
+champion_A_m  <- add_criterion(champion_A_m, criterion = "loo")
+
+
+loo_compare(TheoryFormulaModel,
+            champion_A_m)
+
+## adding wights
+loo_model_weights(TheoryFormulaModel,
+                  champion_A_m)
+
+```
+```{r, Building other models}
+
+### voice hearing
+VoiceHearing2 <- brm(
+    formula = AI_VoiceHearing_f1,
+    data = d,
+    family = gaussian,
+    prior = priorR2,
+    sample_prior = T,
+    refresh = 0,
+    cores = cores,
+    file = "VoiceHearing2"
+    
+  )
+  VoiceHearing2
+  
+# a plot for a posterior check
+VH_posch2 <- pp_check(VoiceHearing2, nsamples = 100)
+VH_posch2
+  
+# test and plot your hypothesis
+VH_hyp2 <- hypothesis(VoiceHearing2, "VoiceHearing > 0")
+VH_hyp2
+
+plot(VH_hyp2)  
+plot(conditional_effects(VoiceHearing2), points = T)
+  
+
+## mind reading
+
+MindReading2 <- brm(
+    formula = AI_MindReading_f1,
+    data = d,
+    family = gaussian,
+    prior = priorR2,
+    sample_prior = T,
+    refresh = 0,
+    cores = cores,
+    file = "MindReading2"
+    )
+
+MindReading2
+# a plot for a posterior check
+MR_posch2 <- pp_check(MindReading2, nsamples = 100)
+MR_posch2
+  
+# test and plot your hypothesis
+MR_hyp2 <- hypothesis(MindReading2, "MindReading > 0")
+MR_hyp2
+
+plot(MR_hyp2)  
+plot(conditional_effects(MindReading2), points = T)
+  
+# VH + MR + A
+AI_VH_MR_A_m2 <- brm(
+  formula = AI_VH_MR_A_f1,
+  data = d,
+  family = gaussian,
+  prior = priorR2,
+  sample_prior = T,
+  cores = cores,
+  file = "AI_VH_MR_A_m2"
+)
+
+AI_VH_MR_A_m2
+
+# Posterior predictive check
+pp_check(AI_VH_MR_A_m2, nsamples = 100)
+
+# Hypothesis testing + updating check
+
+hypothes3_VH2 <- hypothesis(AI_VH_MR_A_m2,
+           "VoiceHearing > 0")
+
+hypothes3_MR2 <- hypothesis(AI_VH_MR_A_m2,
+           "MindReading > 0")
+
+hypothes3_Apathy2 <- hypothesis(AI_VH_MR_A_m2,
+           "Apathy > 0")
+
+
+hypothes3_VH2
+hypothes3_MR2
+hypothes3_Apathy2
+
+
+plot(hypothes3_VH2)
+plot(hypothes3_MR2)
+plot(hypothes3_Apathy2)
+
+
+## conditional effects
+plot(conditional_effects(AI_VH_MR_A_m2), points = T)
+
+
+
+
+
+
+```
+
+
+```{r, Comparing better models2}
+
+## adding criterion loo
+VoiceHearing2 <- add_criterion(VoiceHearing2, criterion = "loo")
+MindReading2 <- add_criterion(MindReading2, criterion = "loo")
+champion_A_m  <- add_criterion(champion_A_m, criterion = "loo")
+TheoryFormulaModel <- add_criterion(TheoryFormulaModel, criterion = "loo")
+AI_VH_MR_A_m2 <- add_criterion(AI_VH_MR_A_m2, criterion = "loo")
+
+
+loo_compare(VoiceHearing2,
+            MindReading2,
+            champion_A_m,
+            TheoryFormulaModel,
+            AI_VH_MR_A_m2)
+## adding wights
+loo_model_weights(VoiceHearing2,
+            MindReading2,
+            champion_A_m,
+            TheoryFormulaModel,
+            AI_VH_MR_A_m2)
+
+```
+
+
+## Third part
+
+These issues are very difficult to think through, and not knowing the causal mechanisms generating the data in advance makes our inferences even more unreliable. To explore these issues, I recommend using simulations. In other words, defining a "true" model, generating data from it and assessing what different analyses would lead you to infer (and therefore which biases they might introduce). You can find the code I used to simulate your data below.
+
+Q3.1) Look through the code and identify whether the results you have match the underlying truth. Discuss what you have learned.
+
+Q3.2) OPTIONAL: is this a general pattern? Try varying the parameters (e.g. correlation values) and assess whether the new dataset(s) leads to the same biases in your analysis.
+
+
+
+```{r}
+pacman::p_load(MASS, tidyverse, psych)
+
+seed <- 1981 # Defining a seed so the results are always the same
+n <- 300 # Defining the amount of participants
+
+SymptomCorr <- .2 # Defining the correlation of symptoms (as they tend to co-occur)
+EffectCorrRel <- .2 # Defining the correlation between relevant symptoms and effect (Some symptoms are positively correlated with the effect)
+EffectCorrIrrel <- 0 # Defining the correlation between irrelevant symptoms and effect (none)
+
+# Creating the variance-covariance matrix for the variables we want to generate (3 symptoms, 1 effect)
+Sigma <- matrix(data=c(1,SymptomCorr,SymptomCorr,EffectCorrRel,
+                       SymptomCorr,1,SymptomCorr,EffectCorrRel,
+                       SymptomCorr,SymptomCorr,1,EffectCorrIrrel,
+                       EffectCorrRel,EffectCorrRel,EffectCorrIrrel,1),
+                       nrow=4,ncol=4)
+
+## Generate data from a multivariate (mvr) normal (n) distribution
+data <- mvrnorm(n = n, # number of participant
+        mu = c(1.2, 1.2, 1.2, 4), # mean of each variable
+        Sigma) # variance co-variance matrix
+
+# Giving meaningful names to variables and add ID
+data <- data.frame(
+  VoiceHearing = data[,1], 
+  MindReading =  data[,2],
+  Apathy =  data[,3], 
+  AltercentricIntrusion = data[,4],
+  ID = seq(nrow(data)))
+
+# Assessing whether the participant has schizophrenia (high enough sum of symptoms)
+# Here we choose participants scoring above 75% percentile (the most severe ones)
+data$Diagnosis <- 0
+data$Diagnosis[(data$VoiceHearing + data$MindReading + data$Apathy) > 
+              quantile(data$VoiceHearing + data$MindReading + data$Apathy, .75)] <-1
+
+## Plotting the relation between variables in schizophrenia
+data1 <- data %>% subset(Diagnosis==1) %>% dplyr::select(-Diagnosis, -ID)
+pairs.panels(data1)
+
+## Plotting the relation between variables all participants
+pairs.panels(dplyr::select(data,-Diagnosis, -ID))
+
+write_csv(data, "datAss3.csv")
+```
+
