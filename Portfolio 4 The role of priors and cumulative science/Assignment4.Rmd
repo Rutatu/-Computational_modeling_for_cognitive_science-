@@ -1,0 +1,503 @@
+---
+title: "Assignment 4 - Applying meta-analytic priors"
+author: "Riccardo Fusaroli"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Assignment 4
+
+In this assignment we do the following:
+- we run a Bayesian meta-analysis of pitch variability in ASD, based on previously published literature
+- we analyze pitch variability in ASD in two new studies using both a conservative and a meta-analytic prior
+- we assess the difference in model quality and estimates using the two priors.
+
+The questions you need to anwser are: What are the consequences of using a meta-analytic prior? Evaluate the models with conservative and meta-analytic priors. Discuss the effects on estimates. Discuss the effects on model quality. Discuss the role that meta-analytic priors should have in scientific practice. Should we systematically use them? Do they have drawbacks? Should we use them to complement more conservative approaches? How does the use of meta-analytic priors you suggest reflect the skeptical and cumulative nature of science?
+
+### Step by step suggestions
+
+Step 1: Perform a meta-analysis of pitch variability from previous studies of voice in ASD
+- the data is available as Ass4_MetaAnalysisData.tsv
+- You should calculate Effect size (cohen's d) and Standard Error (uncertainty in the Cohen's d) per each study, using escalc() from the metafor package (also check the livecoding intro)
+- N.B. we're only interested in getting a meta-analytic effect size for the meta-analytic prior (and not e.g. all the stuff on publication bias). See a brms tutorial here: https://vuorre.netlify.com/post/2016/09/29/meta-analysis-is-a-special-case-of-bayesian-multilevel-modeling/ The formula is EffectSize | se(StandardError) ~ 1 + (1 | Paper). Don't forget prior definition, model checking, etc.
+- Write down the results of the meta-analysis in terms of a prior for step 2.
+
+```{r, Meta-analysis}
+
+
+
+
+#load data and packages
+
+pacman::p_load(pacman, tidyverse, brms, psych, metafor, parallel, patchwork)
+
+cores = detectCores()
+
+dataMetaAnalysis <- read_delim("Ass4_MetaAnalysisData.tsv",
+                               "\t")
+
+dataMetaAnalysis <- dataMetaAnalysis %>%
+  mutate_at(
+    c(
+      "PitchVariabilityASD_Mean",
+      "PitchVariabilityASD_SD",
+      "PitchVariabilityTD_Mean",
+      "PitchVariabilityTD_SD"
+    ),
+    as.numeric
+  )
+
+#describe(dataMetaAnalysis)
+
+#head(dataMetaAnalysis)
+
+#removing papers without titles
+dataMetaAnalysis <- dataMetaAnalysis %>% subset(!is.na(Paper))
+
+
+#creating yi and vi for metaAnalysis
+dataMetaAnalysis <- escalc(
+  measure = "SMD",
+  n1i = TD_N,
+  n2i = ASD_N,
+  m1i = PitchVariabilityTD_Mean,
+  m2i = PitchVariabilityASD_Mean,
+  sd1i = PitchVariabilityTD_SD,
+  sd2i = PitchVariabilityASD_SD,
+  data = dataMetaAnalysis,
+  slab = Paper
+)
+
+dataMetaAnalysis <- dataMetaAnalysis %>%
+  mutate(StandardError = sqrt(vi)) %>%
+  rename(EffectSize = yi)
+
+summary(dataMetaAnalysis$EffectSize)
+
+summary(dataMetaAnalysis$StandardError)
+
+metaFormula <-
+  bf(EffectSize | se (StandardError) ~ 1 + (1 | Population))
+
+get_prior(metaFormula, data = dataMetaAnalysis, family = gaussian())
+
+#I Think this is a skeptial prior, but I'm not sure...
+
+sd(dataMetaAnalysis$EffectSize, na.rm = T)#0.5
+
+
+metaAnalysis_Prior <- c(prior(normal(0, 1), class = Intercept),
+                        prior(normal(0, .25), class = sd))
+
+metaAnalysis_m0 <- brm(
+  metaFormula,
+  data = dataMetaAnalysis,
+  family = gaussian(),
+  prior = metaAnalysis_Prior,
+  sample_prior = "only",
+  chains = 2,
+  cores = cores,
+  file = "priorCheckSkeptical"
+)
+
+#prior predictive Check
+priorCheck_metaAnalysis_m0 <-
+  pp_check(metaAnalysis_m0, nsamples = 100)
+
+priorCheck_metaAnalysis_m0 + labs(title = "Prior Check",
+                                  subtitle = "Skeptical Priors",
+                                  caption = "EffectSize | se (StandardError) ~ 1+ (1|Population)")
+
+
+#fitting model
+metaAnalysis_m1 <- brm(
+  metaFormula,
+  data = dataMetaAnalysis,
+  family = gaussian(),
+  prior = metaAnalysis_Prior,
+  sample_prior = T,
+  chains = 2,
+  cores = cores,
+  file = "metaAnalysis_m1"
+)
+
+#posterior predictive check
+
+pp_check(metaAnalysis_m1, nsamples = 100) + labs(title = "Posterior Check",
+                                                 subtitle = "Skeptical Priors",
+                                                 caption = "EffectSize | se (StandardError) ~ 1+ (1|Population)") 
+
+
+
+#checking model
+summary(metaAnalysis_m1) # effect of 0.43 sd = 0.10
+
+analysisMean <- fixef(metaAnalysis_m1)[[1]]
+analysis_SE <- fixef(metaAnalysis_m1)[[2]]
+analysisHeterogeneity = 0.31
+
+```
+
+
+Step 2: Analyse pitch variability in ASD in two new studies for which you have access to all the trials (not just study level estimates)
+- the data is available as Ass4_data.csv. Notice there are 2 studies (language us, and language dk), multiple trials per participant, and a few different ways to measure pitch variability (if in doubt, focus on pitch IQR, interquartile range of the log of fundamental frequency)
+- Also, let's standardize the data, so that they are compatible with our meta-analytic prior (Cohen's d is measured in SDs).
+- Is there any structure in the dataset that we should account for with random/varying effects? How would you implement that? Or, if you don't know how to do bayesian random/varying effects or don't want to bother, is there anything we would need to simplify in the dataset?
+
+```{r, step 2... MEGA-ANALYSIS!}
+#loading data
+newData <-
+  read_csv("Ass4_data.csv", col_types = cols(ID = col_character()))
+
+#checking classes
+#head(newData)
+#lapply(newData, class)
+
+newData <- newData %>% mutate(PitchVariability = scale(Pitch_IQR))
+
+hist(newData$PitchVariability)
+
+ASD_DensityPitch <-
+  ggplot(data = filter(newData, Diagnosis == "ASD"), aes(PitchVariability, )) + geom_density() + ggtitle("Distribution of Pitch Variability IQ in ASD") + theme(legend.position = "none") + theme(plot.title = element_text(color = "red", size = 10, face = "bold"))
+
+TD_DensityPitch <-
+  ggplot(data = filter(newData, Diagnosis == "TD"), aes(PitchVariability, )) + geom_density() + ggtitle("Distribution of Pitch Variability IQ in TD") + theme(legend.position = "none") + theme(plot.title = element_text(color = "red", size = 10, face = "bold"))
+
+ASD_DensityPitch + TD_DensityPitch
+
+
+#lets take a look at the structure of the data
+
+##language only have two levels and it doesn't change, so that is a fixed effect.
+
+##ID people might vary differently, so we will conewStudiesider that a varying effect
+
+##Verbal IQ may interact with diagnosis and it the data does not look too skewed to cause trouble
+
+ASD_Density_VIQ <-
+  ggplot(data = filter(newData, Diagnosis == "ASD"), aes(VIQ, color = ID)) + geom_density() + ggtitle("Distribution of Verbal IQ in ASD") + theme(legend.position = "none") + theme(plot.title = element_text(size = 10, face = "bold"))
+
+
+TD_Density_VIQ <-
+  ggplot(data = filter(newData, Diagnosis == "TD"), aes(VIQ, color = ID)) + geom_density() + ggtitle("Distribution of Verbal IQ in TD") + theme(legend.position = "none") + theme(plot.title = element_text(size = 10, face = "bold"))
+
+
+
+ASD_Density_VIQ + TD_Density_VIQ
+
+```
+
+
+Step 3: Build a regression model predicting Pitch variability from Diagnosis.
+- how is the outcome distributed? (likelihood function). NB. given we are standardizing, and the meta-analysis is on that scale, gaussian is not a bad assumption. Lognormal would require us to convert the prior to that scale.
+- how are the parameters of the likelihood distribution distributed? Which predictors should they be conditioned on? Start simple, with Diagnosis only. Add other predictors only if you have the time and energy!
+- use a skeptical/conservative prior for the effects of diagnosis. Remember you'll need to motivate it.
+- Evaluate model quality. Describe and plot the estimates. 
+
+```{r, MEGA-ANALYSIS pt 2!!!}
+
+
+#formulas
+newStudies_f0 <- bf(PitchVariability ~ 1 + Diagnosis + (1 | ID))
+
+newStudies_f1 <-
+  bf(PitchVariability ~ 0 + Language + Diagnosis:Language + (1 |
+                                                               ID))
+
+get_prior(newStudies_f0, newData, family = gaussian())
+
+#skeptical prior
+newStudiesPrior0 <- c(
+  prior(normal(0, .3), class = Intercept),
+  prior(normal(0, .1), class = b),
+  prior(normal(0, .1), class = sd),
+  prior(normal(.5, .3), class = sigma)
+)
+
+
+newStudies_m0_pc <- brm(
+  newStudies_f0,
+  data = newData,
+  family = gaussian(),
+  prior = newStudiesPrior0,
+  sample_prior = "only",
+  chains = 2,
+  cores = cores,
+  file = "NewStudies_m0Prior"
+)
+
+pp_check(newStudies_m0_pc, nsamples = 100) + labs(title = "Prior Check",
+                                                  subtitle = "Skeptical Priors",
+                                                  caption = "PitchVariability ~ 1 + Diagnosis + (1 | ID)") 
+
+
+
+
+newStudies_m0 <- brm(
+  newStudies_f0,
+  data = newData,
+  family = gaussian(),
+  prior = newStudiesPrior0,
+  sample_prior = T,
+  chains = 2,
+  cores = cores,
+  file = "NewStudies_m0"
+)
+
+plot(newStudies_m0)
+
+pp_check(newStudies_m0, nsamples = 100) + labs(title = "Posterior Check",
+                                               subtitle = "Skeptical Priors",
+                                               caption = "PitchVariability ~ 1 + Diagnosis + (1 | ID)") 
+
+# hypothesis testing
+hypo_m0 <-
+  plot(hypothesis(newStudies_m0, "DiagnosisTD < 0"), plot = F)
+
+hypo_m0[[1]] + labs(title = "DiagnosisTD < 0",
+                    subtitle = "Skeptical Priors",
+                    caption = "PitchVariability ~ 1 + Diagnosis + (1 | ID)") + theme(strip.text = element_blank())
+
+hypothesis(newStudies_m0, "DiagnosisTD < 0")
+
+
+
+#interactionmodel
+get_prior(newStudies_f1, newData, family = gaussian())
+
+
+# set priors
+NewStudiesPrior1 <- c(
+  prior(normal(0, .1), class = b, coef = "Languagedk"),
+  prior(normal(0, .1), class = b, coef = "Languageus"),
+  prior(normal(0, .1), class = b, coef = "Languagedk:DiagnosisTD"),
+  prior(normal(0, .1), class = b, coef = "Languageus:DiagnosisTD"),
+  prior(normal(0, .1), class = sd),
+  prior(normal(.5, .1), class = sigma)
+)
+
+
+newStudies_m1_pc <- brm(
+  newStudies_f1,
+  newData,
+  family = gaussian(),
+  prior = NewStudiesPrior1,
+  sample_prior = "only",
+  chains = 2,
+  cores = cores,
+  file = "newStudies_m1_pc"
+  
+)
+
+pp_check(newStudies_m1_pc, nsamples = 100) + labs(title = "Prior Check",
+                                                  subtitle = "Skeptical Priors",
+                                                  caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID) ")
+
+
+newStudies_m1 <- brm(
+  newStudies_f1,
+  newData,
+  family = gaussian(),
+  prior = NewStudiesPrior1,
+  sample_prior = T,
+  chains = 2,
+  cores = cores,
+  file = "newStudies_m1"
+  
+)
+
+
+# posterior predictive check
+pp_check(newStudies_m1, nsamples = 100) + labs(title = "Posterior Check",
+                                               subtitle = "Skeptical Priors",
+                                               caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID)")
+
+
+
+# hypothesis testing
+hypo_m1_dk <-
+  plot(hypothesis(newStudies_m1, "Languagedk:DiagnosisTD < 0"), plot = F)
+
+hypo_m1_dk[[1]] + labs(title =  "Languagedk:DiagnosisTD < 0",
+                       subtitle = "Skeptical Priors",
+                       caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID)") + theme(strip.text = element_blank())
+
+hypo_m1_us <-
+  plot(hypothesis(newStudies_m1, "Languageus:DiagnosisTD < 0"), plot = F)
+
+hypo_m1_us[[1]] + labs(title =  "Languageus:DiagnosisTD < 0",
+                       subtitle = "Skeptical Priors",
+                       caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID)") + theme(strip.text = element_blank())
+
+hypothesis(newStudies_m1, "Languagedk:DiagnosisTD < 0")
+hypothesis(newStudies_m1, "Languageus:DiagnosisTD < 0")
+
+hypo_m1_dk_us <- plot(
+  hypothesis(
+    newStudies_m1,
+    "Languagedk:DiagnosisTD < Languageus:DiagnosisTD"
+  ),
+  plot = F
+)
+
+
+hypo_m1_dk_us[[1]] + labs(title =  "Languagedk:DiagnosisTD < Languageus:DiagnosisTD",
+                          subtitle = "Skeptical Priors",
+                          caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID)") + theme(strip.text = element_blank())
+
+hypothesis(newStudies_m1,
+           "Languagedk:DiagnosisTD < Languageus:DiagnosisTD")
+
+summary(newStudies_m1)
+
+
+
+condEff <- plot(conditional_effects(newStudies_m1),plot = F)
+
+condEff[[1]] + labs(title =  "Effect of Language",
+                    subtitle = "Skeptical Priors",
+                    caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID)")
+
+condEff[[2]] + labs(title =  "Effect of Language:Diagnosis",
+                    subtitle = "Skeptical Priors",
+                    caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID)")
+
+newStudies_m0 <- add_criterion(newStudies_m0, criterion = "loo")
+newStudies_m1 <- add_criterion(newStudies_m1, criterion = "loo")
+loo_model_weights(newStudies_m0, newStudies_m1)
+```
+
+
+Step 4: Now re-run the model with the meta-analytic prior
+- Evaluate model quality. Describe and plot the estimates. 
+```{r}
+analysis_Mean <- fixef(metaAnalysis_m1)[[1]]
+analysis_SE <- fixef(metaAnalysis_m1)[[2]]
+analysisHeterogeneity = 0.31
+
+# new priors set from old meta study ^
+newStudiesInformed_prior <- c(
+  prior(normal(.2, .3), class = b, coef = "Languagedk"),
+  prior(normal(.2, .3), class = b, coef = "Languageus"),
+  prior(normal(-0.43, .1), class = b, coef = "Languagedk:DiagnosisTD"),
+  prior(normal(-0.43, .1), class = b, coef = "Languageus:DiagnosisTD"),
+  prior(normal(0, .1), class = sd),
+  prior(normal(.32, .1), class = sigma)
+)
+
+newStudiesInformed_m1_pc <- brm(
+  newStudies_f1,
+  newData,
+  family = gaussian(),
+  prior = newStudiesInformed_prior,
+  sample_prior = "only",
+  chains = 2,
+  cores = cores,
+  file = "newStudiesInformed_m1_pc"
+)
+
+pp_check(newStudiesInformed_m1_pc, nsamples = 100) + labs(title = "Prior Check",
+                                                          subtitle = "Informed Priors",
+                                                          caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID) ")
+
+
+newStudiesInformed_m1 <- brm(
+  newStudies_f1,
+  newData,
+  family = gaussian(),
+  prior = newStudiesInformed_prior,
+  sample_prior = T,
+  chains = 2,
+  cores = cores,
+  file = "newStudiesInformed_m"
+)
+
+pp_check(newStudiesInformed_m1, nsamples = 100) + labs(title = "Posterior Check",
+       subtitle = "Informed Priors",
+       caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID) ") 
+
+# hypothesis testing
+hypoInformed_dk <-
+  plot(hypothesis(newStudiesInformed_m1, "Languagedk:DiagnosisTD < 0"),
+       plot = F)
+
+hypoInformed_dk[[1]] + labs(title =  "Languagedk:DiagnosisTD < 0",
+                            subtitle = "Informed Priors",
+                            caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID)") + theme(strip.text = element_blank())
+
+hypoInformed_us <-
+  plot(hypothesis(newStudiesInformed_m1, "Languageus:DiagnosisTD < 0"),
+       plot = F)
+
+hypoInformed_us[[1]] + labs(title =  "Languageus:DiagnosisTD < 0",
+                            subtitle = "Informed Priors",
+                            caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID)") + theme(strip.text = element_blank())
+
+hypothesis(newStudiesInformed_m1, "Languagedk:DiagnosisTD < 0")
+hypothesis(newStudiesInformed_m1, "Languageus:DiagnosisTD < 0")
+
+hypoInformed_dk_us <-  plot(
+  hypothesis(
+    newStudiesInformed_m1,
+    "Languagedk:DiagnosisTD < Languageus:DiagnosisTD"
+  ),
+  plot = F
+)
+
+hypoInformed_dk_us[[1]] + labs(title =  "Languagedk:DiagnosisTD < Languageus:DiagnosisTD",
+                               subtitle = "Informed Priors",
+                               caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID)") + theme(strip.text = element_blank())
+
+hypothesis(newStudiesInformed_m1,
+           "Languagedk:DiagnosisTD < Languageus:DiagnosisTD")
+
+summary(newStudiesInformed_m1)
+
+newStudiesInformed_m1 <-
+  add_criterion(newStudiesInformed_m1,
+                criterion = "loo",
+                reloo = T)
+
+```
+
+
+Step 5: Compare the models
+- Plot priors and posteriors of the diagnosis effect in both models
+- Compare posteriors between the two models
+- Compare the two models (LOO)
+- Discuss how they compare and whether any of them is best.
+
+```{r}
+loo_model_weights(newStudies_m1, newStudiesInformed_m1)
+
+# plot hypotheses
+
+hypo_m1_dk[[1]] + labs(title =  "Languagedk:DiagnosisTD < 0",
+                       subtitle = "Skeptical Priors",
+                       caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID)") + theme(strip.text = element_blank())
+
+hypothesis(newStudies_m1, "Languagedk:DiagnosisTD < 0")
+
+hypo_m1_us[[1]] + labs(title =  "Languageus:DiagnosisTD < 0",
+                       subtitle = "Skeptical Priors",
+                       caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID)") + theme(strip.text = element_blank())
+
+hypothesis(newStudies_m1, "Languageus:DiagnosisTD < 0")
+
+hypoInformed_dk[[1]] + labs(title =  "Languagedk:DiagnosisTD < 0",
+                            subtitle = "Informed Priors",
+                            caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID)") + theme(strip.text = element_blank())
+
+hypothesis(newStudiesInformed_m1, "Languagedk:DiagnosisTD < 0")
+
+hypoInformed_us[[1]] + labs(title =  "Languageus:DiagnosisTD < 0",
+                            subtitle = "Informed Priors",
+                            caption = "PitchVariability~0 + Language + Diagnosis:Language+(1|ID)") + theme(strip.text = element_blank())
+
+hypothesis(newStudiesInformed_m1, "Languageus:DiagnosisTD < 0")
+
+
+```
