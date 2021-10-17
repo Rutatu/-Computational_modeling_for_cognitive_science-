@@ -1,4 +1,4 @@
-# Computational_modeling_for_cognitive_science
+# Computational (Bayesian)_modeling_for_cognitive_science
 
 ***This repository contains portfolio assignments, which were done during the Computational modeling for cognitive science course as part of Cognitive Science BA´s degree at Aarhus University***
 
